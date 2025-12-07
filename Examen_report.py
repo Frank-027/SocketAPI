@@ -1,118 +1,156 @@
-# exam_report_web.py
+# Examen_report.py
 from flask import Flask, render_template_string
 from datetime import datetime, timedelta
 import os
 
-LOG_FILE = "student_log.txt"
-MAX_OFFLINE_SECONDS = 30
-EXAM_DURATION_HOURS = 4
-
 app = Flask(__name__)
+
+LOG_FILE = "student_log.txt"
+
+REPORT_HTML = """
+<!doctype html>
+<html>
+<head>
+    <title>Exam Report</title>
+    <style>
+        body { font-family: Arial; margin: 40px; }
+        h2 { text-align: center; }
+        .student { margin-bottom: 50px; }
+        .timeline { display: flex; height: 30px; border: 1px solid #ccc; width: 80%; margin: auto; }
+        .segment { height: 100%; }
+        .online { background-color: green; }
+        .offline { background-color: red; }
+        .label { text-align: center; font-size: 0.9em; margin-top: 5px; }
+        table { border-collapse: collapse; width: 60%; margin: 10px auto; }
+        th, td { border: 1px solid #ccc; padding: 5px; text-align: center; }
+        th { background-color: #f0f0f0; }
+    </style>
+</head>
+<body>
+    <h1>Student Online/Offline Report</h1>
+    {% for student, segments in report.items() %}
+    <div class="student">
+        <h2>{{ student }}</h2>
+
+        <!-- Tijdslijn -->
+        <div class="timeline">
+            {% for seg in segments %}
+                <div class="segment {{ seg.status }}" style="flex: {{ seg.duration_ratio }};" title="{{ seg.time }} - {{ seg.status }}"></div>
+            {% endfor %}
+        </div>
+
+        <!-- Offline tabel -->
+        <table>
+            <thead>
+                <tr><th>Offline start</th><th>Offline einde</th><th>Duur (sec)</th></tr>
+            </thead>
+            <tbody>
+            {% for offline in offline_segments[student] %}
+                <tr>
+                    <td>{{ offline.start }}</td>
+                    <td>{{ offline.end }}</td>
+                    <td>{{ offline.duration }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% endfor %}
+</body>
+</html>
+"""
 
 @app.route('/report')
 def report():
     if not os.path.exists(LOG_FILE):
-        return "<h1>Geen logbestand gevonden!</h1>"
+        return "Geen log beschikbaar"
 
-    # Lees logbestand
-    with open(LOG_FILE, "r") as f:
-        lines = f.readlines()
-
-    # Groepeer per student
-    students_entries = {}
-    for line in lines:
-        parts = line.strip().split(" - ")
-        if len(parts) != 3:
-            continue
-        ts_str, name, status = parts
-        ts = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-        if name not in students_entries:
-            students_entries[name] = []
-        students_entries[name].append({"time": ts, "status": status})
-
-    # Verwerk entries
+    # Lees log
     report_data = {}
-    offline_summary = {}
-    exam_start = min(min(e["time"] for e in entries) for entries in students_entries.values())
-    exam_end = exam_start + timedelta(hours=EXAM_DURATION_HOURS)
-    total_seconds = EXAM_DURATION_HOURS * 3600
+    with open(LOG_FILE) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(" - ")
+            if len(parts) != 4:
+                continue
+            timestamp_str, studentNr, name, status = parts
+            timestamp = datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+            key = f"{studentNr} - {name}"
+            if key not in report_data:
+                report_data[key] = []
+            report_data[key].append({"time": timestamp, "status": status})
 
-    for name, entries in students_entries.items():
-        merged = []
-        last_entry = None
-        offline_summary[name] = []
-        for e in entries:
-            if not last_entry:
-                last_entry = {"time": e["time"], "status": e["status"]}
-            else:
-                if e["status"] == last_entry["status"]:
-                    last_entry["time_end"] = e["time"]
-                else:
-                    if last_entry["status"] == "OFFLINE":
-                        duration = (last_entry.get("time_end", last_entry["time"]) - last_entry["time"]).total_seconds()
-                        if duration >= MAX_OFFLINE_SECONDS:
-                            merged.append(last_entry)
-                            offline_summary[name].append(last_entry)
-                    else:
-                        merged.append(last_entry)
-                    last_entry = {"time": e["time"], "status": e["status"]}
-        if last_entry:
-            if last_entry["status"] == "OFFLINE":
-                duration = (last_entry.get("time_end", last_entry["time"]) - last_entry["time"]).total_seconds()
-                if duration >= MAX_OFFLINE_SECONDS:
-                    merged.append(last_entry)
-                    offline_summary[name].append(last_entry)
-            else:
-                merged.append(last_entry)
-        report_data[name] = merged
+    MAX_EXAM_SECONDS = 4 * 60 * 60  # 4 uur
+    filtered_report = {}
+    offline_segments = {}
 
-    # HTML genereren
-    html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-    <meta charset="utf-8">
-    <title>Exam Report</title>
-    <style>
-    body { font-family: Arial; margin: 40px; }
-    h2 { margin-top: 50px; }
-    .timeline { display: flex; height: 20px; margin-bottom: 5px; border: 1px solid #ccc; }
-    .online { background-color: green; }
-    .offline { background-color: red; }
-    .offline-table { margin-bottom: 40px; }
-    table { border-collapse: collapse; width: 60%; }
-    th, td { border: 1px solid #ccc; padding: 5px; text-align: center; }
-    th { background-color: #f0f0f0; }
-    </style>
-    </head>
-    <body>
-    <h1>Exam Report</h1>
-    """
+    # Sorteer op studentNr
+    sorted_keys = sorted(report_data.keys(), key=lambda x: int(x.split(" - ")[0]))
 
-    for name, events in report_data.items():
-        html += f"<h2>{name}</h2>\n"
-        html += '<div class="timeline">'
-        for e in events:
-            start_sec = max(0, (e["time"] - exam_start).total_seconds())
-            end_sec = min(total_seconds, (e.get("time_end", e["time"]) - exam_start).total_seconds())
-            width_percent = (end_sec - start_sec) / total_seconds * 100
-            cls = "online" if e["status"]=="ONLINE" else "offline"
-            html += f'<div class="{cls}" style="width:{width_percent}%"></div>'
-        html += "</div>"
+    for key in sorted_keys:
+        entries = report_data[key]
+        segments = []
+        offline_list = []
 
-        # Tabel offline periodes ≥30 sec
-        html += '<div class="offline-table">'
-        html += "<table><tr><th>Offline start</th><th>Offline einde</th></tr>"
-        for e in offline_summary[name]:
-            start = e["time"].strftime("%H:%M:%S")
-            end = e.get("time_end", e["time"]).strftime("%H:%M:%S")
-            html += f"<tr><td>{start}</td><td>{end}</td></tr>"
-        html += "</table></div>"
+        last_time = None
+        last_status = None
 
-    html += "</body></html>"
+        for entry in entries:
+            if last_time:
+                duration = (entry['time'] - last_time).total_seconds()
 
-    return html
+                # Alleen offline segmenten toevoegen als duur >= 30 sec
+                if last_status == 'OFFLINE' and duration >= 30:
+                    segments.append({
+                        "status": 'offline',
+                        "time": last_time.strftime("%H:%M:%S"),
+                        "duration_ratio": duration / MAX_EXAM_SECONDS
+                    })
+                    offline_list.append({
+                        "start": last_time.strftime("%H:%M:%S"),
+                        "end": entry['time'].strftime("%H:%M:%S"),
+                        "duration": int(duration)
+                    })
+                elif last_status == 'ONLINE':
+                    segments.append({
+                        "status": 'online',
+                        "time": last_time.strftime("%H:%M:%S"),
+                        "duration_ratio": duration / MAX_EXAM_SECONDS
+                    })
+
+            last_time = entry['time']
+            last_status = entry['status']
+
+        # Laatste segment (afhankelijk van status)
+        if last_time:
+            # Bereken resterende tijd tot max examen
+            duration = MAX_EXAM_SECONDS - (entries[0]['time'] - last_time).total_seconds()
+            if last_status == 'OFFLINE' and duration >= 30:
+                segments.append({
+                    "status": 'offline',
+                    "time": last_time.strftime("%H:%M:%S"),
+                    "duration_ratio": duration / MAX_EXAM_SECONDS
+                })
+                offline_list.append({
+                    "start": last_time.strftime("%H:%M:%S"),
+                    "end": (last_time + timedelta(seconds=duration)).strftime("%H:%M:%S"),
+                    "duration": int(duration)
+                })
+            elif last_status == 'ONLINE':
+                segments.append({
+                    "status": 'online',
+                    "time": last_time.strftime("%H:%M:%S"),
+                    "duration_ratio": duration / MAX_EXAM_SECONDS
+                })
+
+        filtered_report[key] = segments
+        offline_segments[key] = offline_list
+
+    return render_template_string(REPORT_HTML, report=filtered_report, offline_segments=offline_segments)
 
 if __name__ == "__main__":
-    print("Server gestart op http://0.0.0.0:8001/report")
+    print("[STARTING] Examen report server op http://0.0.0.0:8001")
     app.run(host='0.0.0.0', port=8001, debug=True)
+
