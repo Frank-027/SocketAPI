@@ -1,12 +1,19 @@
 import socket
 import threading
 
+# Functie om het lokale IP-adres te verkrijgen
+    # Dit maakt gebruik van een tijdelijke socketverbinding
+    # naar een externe server om het juiste IP-adres te bepalen
+    # zonder daadwerkelijk gegevens te verzenden.
+    # We gebruiken hier Google's openbare DNS-server (
 def get_local_ip():
+    
+    # AF_INET is voor IPv4, SOCK_DGRAM voor UDP).
     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         # Dit maakt geen echte verbinding, maar dwingt het OS te kiezen
         s.connect(("8.8.8.8", 80))
-        return s.getsockname()[0]
+        return s.getsockname()[0] # Retourneer het lokale IP-adres
     finally:
         s.close()
 
